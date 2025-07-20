@@ -1,13 +1,16 @@
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { OpenAI } from "@langchain/openai";
 
-// console.log("OPENAI_BASE_URL del entorno:", process.env.OPENAI_BASE_URL);
-// console.log("OPENAI_API_KEY del entorno:", process.env.OPENAI_API_KEY);
+import {
+  START,
+  END,
+  MessagesAnnotation,
+  StateGraph,
+  MemorySaver,
+} from "@langchain/langgraph";
+import { v4 as uuidv4 } from "uuid";
 
 async function main() {
-  const model = new OpenAI({
-    // --- CAMBIO CLAVE AQUÍ: Usamos la propiedad 'configuration' ---
-    // Esto es un objeto que se pasa al constructor del cliente interno de OpenAI.
+  const llm = new OpenAI({
     configuration: {
       // baseURL es una propiedad del cliente de OpenAI, no directamente de OpenAI (LangChain)
       baseURL: process.env.OPENAI_BASE_URL || "http://localhost:1234/v1",
@@ -20,22 +23,50 @@ async function main() {
     temperature: 0,
   });
 
-  const messages = [
-    new SystemMessage("Eres un traductor. Tu tarea es traducir exactamente lo que se te pide, sin agregar información"),
-    new HumanMessage("Your are pretty woman"),
-  ];
+  const callModel = async (state: typeof MessagesAnnotation.State) => {
+    const response = await llm.invoke(state.messages);
+    return { messages: response };
+  };
 
-
-
+  //Con Prompt
   try {
-    const response = await model.invoke(messages);
-    console.log(response);
+    // Define a new graph
+    const workflow = new StateGraph(MessagesAnnotation)
+      // Define the node and edge
+      .addNode("model", callModel)
+      .addEdge(START, "model")
+      .addEdge("model", END);
+
+    // Add memory
+    const memory = new MemorySaver();
+    const app = workflow.compile({ checkpointer: memory });
+
+    const config = { configurable: { thread_id: uuidv4() } };
+
+    const input = [
+      {
+        role: "user",
+        content: "Hi! I'm Bob.",
+      },
+    ];
+    const output = await app.invoke({ messages: input }, config);
+    // The output contains all messages in the state.
+    // This will log the last message in the conversation.
+    console.log(output.messages[output.messages.length - 1]);
+
+    const input2 = [
+      {
+        role: "user",
+        content: "What's my name?",
+      },
+    ];
+
+    const output2 = await app.invoke({ messages: input2 }, config);
+    console.log(output2.messages[output2.messages.length - 1]);
+
+    
   } catch (error) {
     console.error("Error al invocar el modelo:", error);
-    if (error instanceof Error) {
-      console.error("Mensaje de error:", error.message);
-      console.error("Stack de error:", error.stack);
-    }
   }
 }
 
